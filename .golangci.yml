@@ -1,0 +1,144 @@
+# GolangCI-Lint Configuration for GhostShip
+# Static analysis and code quality checks
+
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - node_modules
+    - .git
+  skip-files:
+    - ".*_test.go"
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters:
+  enable:
+    # Security-focused linters
+    - gosec        # Security issues
+    - govet        # Suspicious constructs
+    - errcheck     # Unchecked errors
+    - staticcheck  # Static analysis
+
+    # Code quality linters
+    - gofmt        # Code formatting
+    - goimports    # Import formatting
+    - ineffassign  # Ineffectual assignments
+    - misspell     # Spelling mistakes
+    - unparam      # Unused function parameters
+    - unused       # Unused code
+    - deadcode     # Dead code
+    - varcheck     # Unused variables
+    - structcheck  # Unused struct fields
+
+    # Style linters
+    - golint       # Code style
+    - stylecheck   # Style guide enforcement
+
+    # Complexity linters
+    - gocyclo      # Cyclomatic complexity
+    - gocognit     # Cognitive complexity
+    - funlen       # Function length
+
+    # Performance linters
+    - prealloc     # Slice preallocation
+
+  disable:
+    - lll          # Line length (too strict for examples)
+    - dupl         # Code duplication (can be noisy)
+
+linters-settings:
+  gosec:
+    # Security checks configuration
+    severity: medium
+    confidence: medium
+    excludes:
+      - G104  # Audit errors not checked (we use errcheck instead)
+    config:
+      G301: "0600"  # Enforce strict file permissions
+      G302: "0600"  # Enforce strict file permissions for temp files
+      G306: "0600"  # Enforce strict file permissions for new files
+
+  errcheck:
+    # Check for unhandled errors
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      - (io.Closer).Close
+      - (*os.File).Close
+
+  gocyclo:
+    # Cyclomatic complexity threshold
+    min-complexity: 15
+
+  gocognit:
+    # Cognitive complexity threshold
+    min-complexity: 20
+
+  funlen:
+    # Function length limits
+    lines: 100
+    statements: 50
+
+  govet:
+    # Go vet checks
+    check-shadowing: true
+    enable-all: true
+
+  staticcheck:
+    # Static analysis checks
+    checks: ["all"]
+
+  misspell:
+    # Spelling check
+    locale: US
+
+issues:
+  # Maximum issues count per linter
+  max-issues-per-linter: 50
+  max-same-issues: 3
+
+  # Exclude specific issues
+  exclude-rules:
+    # Exclude some linters from running on tests
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+
+    # Exclude some linters from running on mocks
+    - path: tests/mocks/
+      linters:
+        - deadcode
+        - unused
+        - varcheck
+
+    # Exclude some staticcheck messages
+    - linters:
+        - staticcheck
+      text: "SA9003:"
+
+    # Exclude ineffectual assignments in tests
+    - path: _test\.go
+      text: "ineffectual assignment"
+
+  # Show all issues from these linters
+  exclude-use-default: false
+
+severity:
+  # Default value is empty string
+  # Set to "error" to fail on any issue
+  default-severity: warning
+
+  # Make security issues errors
+  rules:
+    - linters:
+        - gosec
+      severity: error
