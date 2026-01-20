@@ -38,6 +38,19 @@ jobs:
           # Windows Build
           GOOS=windows GOARCH=amd64 go build -o dist/ghostship-windows.exe main.go
 
+      - name: Build Bridge (Go)
+        working-directory: bridge/go
+        run: |
+          mkdir -p dist
+          # Linux Build
+          GOOS=linux GOARCH=amd64 go build -o dist/bridge-linux main.go
+          # Windows Build
+          GOOS=windows GOARCH=amd64 go build -o dist/bridge-windows.exe main.go
+
+      - name: Package Bridge (Node.js)
+        run: |
+          zip -r bridge-nodejs.zip bridge/nodejs
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
@@ -45,6 +58,9 @@ jobs:
           files: |
             implant/dist/ghostship-linux
             implant/dist/ghostship-windows.exe
+            bridge/go/dist/bridge-linux
+            bridge/go/dist/bridge-windows.exe
+            bridge-nodejs.zip
           name: GhostShip ${{ github.ref_name }}
           draft: false
           prerelease: true
