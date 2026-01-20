@@ -67,11 +67,12 @@ jobs:
           curl -fsSL "https://github.com/BishopFox/sliver/releases/download/v${SLIVER_VERSION}/sliver-client_linux" -o sliver-client
           chmod +x sliver-client
 
-          # Generate operator config
+          # Generate operator config and import it
           ./sliver-server operator --name ci-operator --lhost localhost --save ci-operator.cfg
+          ./sliver-client import ci-operator.cfg
 
           # Generate Linux implant (mTLS to 127.0.0.1:8888 - intercepted by LD_PRELOAD hook)
-          ./sliver-client --config ci-operator.cfg <<EOF
+          ./sliver-client <<EOF
           generate --mtls 127.0.0.1:8888 --os linux --arch amd64 --format executable --skip-symbols --save /tmp/sliver-linux
           exit
           EOF
@@ -166,11 +167,12 @@ jobs:
           curl -fsSL "https://github.com/BishopFox/sliver/releases/download/v${SLIVER_VERSION}/sliver-client_linux" -o sliver-client
           chmod +x sliver-client
 
-          # Generate operator config
+          # Generate operator config and import it
           ./sliver-server operator --name ci-operator --lhost localhost --save ci-operator.cfg
+          ./sliver-client import ci-operator.cfg
 
           # Generate Windows implant with Named Pipe transport
-          ./sliver-client --config ci-operator.cfg <<EOF
+          ./sliver-client <<EOF
           generate --named-pipe '\\\\.\\pipe\\gspipe' --os windows --arch amd64 --format executable --skip-symbols --save /tmp/sliver-windows
           exit
           EOF
