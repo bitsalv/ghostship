@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"embed"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
