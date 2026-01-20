@@ -39,6 +39,7 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -o dist/ghostship-windows.exe main.go
 
       - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: |
