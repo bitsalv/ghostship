@@ -19,12 +19,13 @@ jobs:
           go-version: '1.21'
 
       - name: Build Implants
+        working-directory: implant
         run: |
-          mkdir -p implant/dist
+          mkdir -p dist
           # Linux Build
-          GOOS=linux GOARCH=amd64 go build -o implant/dist/ghostship-linux ./implant/main.go
+          GOOS=linux GOARCH=amd64 go build -o dist/ghostship-linux main.go
           # Windows Build
-          GOOS=windows GOARCH=amd64 go build -o implant/dist/ghostship-windows.exe ./implant/main.go
+          GOOS=windows GOARCH=amd64 go build -o dist/ghostship-windows.exe main.go
 
       - name: Create Release
         uses: softprops/action-gh-release@v1

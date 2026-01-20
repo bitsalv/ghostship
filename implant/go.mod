@@ -1,4 +1,4 @@
-module ghostship
+module ghostship/implant
 
 go 1.21
 
