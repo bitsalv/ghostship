@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "Bridge component for exposing Sliver C2 server through Holesail P2P network",
   "main": "bridge.js",
-  "type": "module",
   "scripts": {
     "start": "node bridge.js",
     "dev": "node --watch bridge.js"
@@ -18,6 +17,7 @@
   "author": "Security Research Lab",
   "license": "MIT",
   "dependencies": {
-    "holesail": "^1.8.0"
+    "commander": "^11.0.0",
+    "hyperdht": "^6.9.0"
   }
 }

