@@ -32,31 +32,29 @@ By utilizing [Holesail](https://github.com/holesail/holesail) technology, GhostS
 
 ## Architecture
 
-```
-                                    HyperDHT Network
-                                          |
-                                          | UDP/P2P
-                                          |
-        +-----------------------------+   |   +-----------------------------+
-        |       TARGET MACHINE        |   |   |      OPERATOR MACHINE       |
-        |                             |   |   |                             |
-        |  +--------+    +---------+  |   |   |  +---------+    +--------+  |
-        |  | Sliver |<-->| Node.js |<-|---+---|->| Bridge  |<-->| Sliver |  |
-        |  | Payload|    | Client  |  |       |  |(HyperDHT)|   | Server |  |
-        |  +--------+    +---------+  |       |  +---------+    +--------+  |
-        |       ^              ^      |       |       ^              ^      |
-        |       |              |      |       |       |              |      |
-        |   socketpair     HyperDHT   |       |   HyperDHT     TCP:8888     |
-        |   (Linux)        connect    |       |   listen       (mTLS)      |
-        |   Named Pipe                |       |                            |
-        |   (Windows)                 |       |  Connection Key:           |
-        |                             |       |  hs://abc123...            |
-        +-----------------------------+       +-----------------------------+
+```mermaid
+flowchart LR
+    subgraph TARGET["TARGET MACHINE"]
+        SLIVER_P["Sliver Payload"]
+        NODE_C["Node.js Client"]
+        SLIVER_P <-->|"socketpair (Linux)<br>Named Pipe (Windows)"| NODE_C
+    end
+
+    subgraph OPERATOR["OPERATOR MACHINE"]
+        BRIDGE["Bridge<br>(HyperDHT)"]
+        SLIVER_S["Sliver Server"]
+        BRIDGE <-->|"TCP :8888<br>(mTLS)"| SLIVER_S
+    end
+
+    NODE_C <-->|"UDP/P2P<br>HyperDHT Network"| BRIDGE
+
+    style TARGET fill:#1a1a2e,stroke:#e94560,color:#fff
+    style OPERATOR fill:#1a1a2e,stroke:#0f3460,color:#fff
 ```
 
 **Data Flow:**
 1. Operator starts Sliver server with mTLS listener on port 8888
-2. Bridge connects to Sliver and exposes it via HyperDHT, generating a connection key
+2. Bridge connects to Sliver and exposes it via HyperDHT, generating a connection key (`hs://...`)
 3. Implant connects to HyperDHT using the connection key
 4. Sliver payload communicates through internal IPC (socketpair/Named Pipe) to the Node.js client
 5. Node.js client tunnels traffic over P2P to the bridge
@@ -73,7 +71,7 @@ By utilizing [Holesail](https://github.com/holesail/holesail) technology, GhostS
 | **Local Stealth (Linux)** | LD_PRELOAD hook redirects TCP to socketpair. No listening ports visible via `netstat`/`ss`. Fileless execution via `memfd_create`. Process names spoofed as `[kworker/...]` | Processes visible in `ps`. `/proc` filesystem exposes process info. Memory forensics can find payloads |
 | **Local Stealth (Windows)** | Named Pipe transport (no TCP listener). PPID Spoofing (child of svchost.exe). AMSI/ETW patching blinds local telemetry | Not a rootkit. No kernel-level hiding. EDR signatures will eventually detect |
 | **Capability** | Full Sliver C2 feature set: shell, upload, download, pivoting, etc. | Binary size ~70-100MB due to embedded Node.js runtime |
-| **Architecture** | Validates P2P C2 feasibility. Works across NAT without port forwarding | Bridge pattern introduces complexity. Native P2P C2 would be more robust |
+| **Architecture** | Validates P2P C2 feasibility. Works across NAT without port forwarding | Bridge design introduces complexity. Native P2P C2 would be more robust |
 
 ---
 
@@ -128,12 +126,14 @@ The CI/CD pipeline automatically builds armed binaries on release. For manual bu
 1. **Obtain a Node.js binary** compatible with your target platform
 2. **Generate your Sliver implant**:
    - Linux: `generate --mtls 127.0.0.1:8888 --os linux --arch amd64`
-   - Windows: `generate --named-pipe '\\\\.\\pipe\\gspipe' --os windows --arch amd64`
+   - Windows: `generate --named-pipe '\\.\pipe\gspipe' --os windows --arch amd64`
 3. **Bundle and Build:**
    ```bash
    ./bundle.sh /path/to/node /path/to/implant
    make build-linux   # or make build-windows
    ```
+
+> **Note:** The Named Pipe path (`\\.\pipe\gspipe`) is hardcoded in the loader. To use a different pipe name, modify the `PIPE_NAME` constant in `loader_windows.go` and regenerate the Sliver implant with the matching `--named-pipe` value.
 
 ---
 
@@ -164,12 +164,6 @@ ghostship/
 ## Disclaimer
 
 This project is for **authorized security research and penetration testing only**. Unauthorized access to computer systems is illegal. Always obtain proper authorization before testing.
-
----
-
-## Author
-
-**bitsalv**
 
 ---
 
