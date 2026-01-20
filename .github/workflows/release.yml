@@ -38,6 +38,10 @@ jobs:
           # Windows Build
           GOOS=windows GOARCH=amd64 go build -o dist/ghostship-windows.exe main.go
 
+      - name: Sync Bridge Dependencies
+        working-directory: bridge/go
+        run: go mod tidy
+
       - name: Build Bridge (Go)
         working-directory: bridge/go
         run: |
