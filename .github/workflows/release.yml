@@ -23,6 +23,10 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Sync Dependencies
+        working-directory: implant
+        run: go mod tidy
+
       - name: Build Implants
         working-directory: implant
         run: |
