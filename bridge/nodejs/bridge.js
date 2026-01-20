@@ -4,7 +4,6 @@ const { program } = require('commander');
 
 program
   .option('-p, --port <number>', 'Sliver mTLS port', '8888')
-  .option('-s, --secure', 'Secure mode (requires keyPair)', true)
   .parse(process.argv);
 
 const options = program.opts();

@@ -1,0 +1,39 @@
+name: GhostShip Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Build Implants
+        run: |
+          mkdir -p implant/dist
+          # Linux Build
+          GOOS=linux GOARCH=amd64 go build -o implant/dist/ghostship-linux ./implant/main.go
+          # Windows Build
+          GOOS=windows GOARCH=amd64 go build -o implant/dist/ghostship-windows.exe ./implant/main.go
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            implant/dist/ghostship-linux
+            implant/dist/ghostship-windows.exe
+          name: GhostShip ${{ github.ref_name }}
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
