@@ -19,7 +19,7 @@ func extractAssets(destDir string) error {
 
 	for _, entry := range entries {
 		if entry.IsDir() { continue }
-		if !strings.HasSuffix(entry.Name(), ".js") && !strings.HasSuffix(entry.Name(), ".tar.gz") {
+		if !strings.HasSuffix(entry.Name(), ".js") && !strings.HasSuffix(entry.Name(), ".gz") && !strings.HasSuffix(entry.Name(), ".tar.gz") {
 			continue
 		}
 
