@@ -23,18 +23,55 @@ async function startBridge() {
   const server = dht.createServer((bridgeSocket) => {
     console.log('[*] New P2P Connection established');
 
-    const sliverSocket = net.connect(options.port, '127.0.0.1', () => {
-      bridgeSocket.pipe(sliverSocket).pipe(bridgeSocket);
+    const sliverSocket = net.connect(options.port, '127.0.0.1');
+
+    /* Buffer data until Sliver connection is ready */
+    let bufferedData = [];
+    let sliverReady = false;
+
+    bridgeSocket.on('data', (data) => {
+      if (sliverReady && !sliverSocket.destroyed) {
+        sliverSocket.write(data);
+      } else {
+        bufferedData.push(data);
+      }
+    });
+
+    sliverSocket.on('connect', () => {
+      console.log('[*] Connected to Sliver server');
+      sliverReady = true;
+
+      /* Flush buffered data */
+      for (const chunk of bufferedData) {
+        sliverSocket.write(chunk);
+      }
+      bufferedData = [];
+    });
+
+    sliverSocket.on('data', (data) => {
+      if (!bridgeSocket.destroyed) {
+        bridgeSocket.write(data);
+      }
+    });
+
+    sliverSocket.on('end', () => {
+      console.log('[*] Sliver connection ended');
+      if (!bridgeSocket.destroyed) bridgeSocket.end();
+    });
+
+    bridgeSocket.on('end', () => {
+      console.log('[*] P2P connection ended');
+      if (!sliverSocket.destroyed) sliverSocket.end();
     });
 
     sliverSocket.on('error', (err) => {
       console.error('[!] Sliver connection error:', err.message);
-      bridgeSocket.destroy();
+      if (!bridgeSocket.destroyed) bridgeSocket.destroy();
     });
 
     bridgeSocket.on('error', (err) => {
       console.error('[!] Bridge socket error:', err.message);
-      sliverSocket.destroy();
+      if (!sliverSocket.destroyed) sliverSocket.destroy();
     });
   });
 

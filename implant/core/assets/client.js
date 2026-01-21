@@ -42,6 +42,7 @@ if (pipeFdStr) {
         try {
             /* Create duplex stream from file descriptor */
             pipeStream = new net.Socket({ fd: pipeFd, readable: true, writable: true });
+            pipeStream.resume(); /* IMPORTANT: Socket from fd starts paused, must resume */
             console.log(`[*] Using pipe fd: ${pipeFd}`);
         } catch (err) {
             console.error(`[!] Failed to open pipe fd ${pipeFd}:`, err.message);
@@ -67,17 +68,37 @@ async function connectToBridge() {
                 /* Pipe mode: bidirectional pipe between DHT and socketpair */
                 console.log('[*] Piping to local socketpair');
 
-                socket.pipe(pipeStream);
-                pipeStream.pipe(socket);
+                /* Bidirectional piping with proper error handling */
+                socket.on('data', (data) => {
+                    if (!pipeStream.destroyed) {
+                        pipeStream.write(data);
+                    }
+                });
+
+                pipeStream.on('data', (data) => {
+                    if (!socket.destroyed) {
+                        socket.write(data);
+                    }
+                });
+
+                socket.on('end', () => {
+                    console.log('[*] DHT socket ended');
+                    if (!pipeStream.destroyed) pipeStream.end();
+                });
+
+                pipeStream.on('end', () => {
+                    console.log('[*] Pipe ended');
+                    if (!socket.destroyed) socket.end();
+                });
 
                 pipeStream.on('error', (err) => {
                     console.error('[!] Pipe error:', err.message);
-                    socket.destroy();
+                    if (!socket.destroyed) socket.destroy();
                 });
 
                 pipeStream.on('close', () => {
                     console.log('[*] Pipe closed');
-                    socket.destroy();
+                    if (!socket.destroyed) socket.destroy();
                 });
             } else {
                 /*

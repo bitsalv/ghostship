@@ -28,6 +28,9 @@
 /* Original connect function pointer */
 static int (*real_connect)(int, const struct sockaddr *, socklen_t) = NULL;
 
+/* Track the hijacked socket fd (the original sockfd that Sliver uses) */
+static int hijacked_sockfd = -1;
+
 /* Get the pipe fd from environment */
 static int get_pipe_fd(void) {
     const char *fd_str = getenv("SLIVER_PIPE_FD");
@@ -35,6 +38,11 @@ static int get_pipe_fd(void) {
         return -1;
     }
     return atoi(fd_str);
+}
+
+/* Check if this fd is our hijacked socket */
+static int is_hijacked_fd(int fd) {
+    return (hijacked_sockfd >= 0 && fd == hijacked_sockfd);
 }
 
 /* Check if address matches our target */
@@ -90,6 +98,9 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
             return -1;
         }
 
+        /* Track this fd as hijacked for later getsockopt/getpeername calls */
+        hijacked_sockfd = sockfd;
+
         /* Success - Sliver now talks through the pipe */
         return 0;
     }
@@ -114,11 +125,10 @@ int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optl
     }
 
     /*
-     * If this fd is our pipe, return success for common socket options
+     * If this fd is our hijacked socket, return success for common socket options
      * that Sliver might check (like SO_ERROR after connect)
      */
-    int pipe_fd = get_pipe_fd();
-    if (pipe_fd >= 0 && sockfd == pipe_fd) {
+    if (is_hijacked_fd(sockfd)) {
         if (level == SOL_SOCKET && optname == SO_ERROR) {
             if (optval != NULL && optlen != NULL && *optlen >= sizeof(int)) {
                 *((int *)optval) = 0;  /* No error */
@@ -145,8 +155,7 @@ int getpeername(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
         }
     }
 
-    int pipe_fd = get_pipe_fd();
-    if (pipe_fd >= 0 && sockfd == pipe_fd) {
+    if (is_hijacked_fd(sockfd)) {
         /* Return fake peer address */
         if (addr != NULL && addrlen != NULL && *addrlen >= sizeof(struct sockaddr_in)) {
             struct sockaddr_in *addr_in = (struct sockaddr_in *)addr;
@@ -175,8 +184,7 @@ int getsockname(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
         }
     }
 
-    int pipe_fd = get_pipe_fd();
-    if (pipe_fd >= 0 && sockfd == pipe_fd) {
+    if (is_hijacked_fd(sockfd)) {
         /* Return fake local address */
         if (addr != NULL && addrlen != NULL && *addrlen >= sizeof(struct sockaddr_in)) {
             struct sockaddr_in *addr_in = (struct sockaddr_in *)addr;
