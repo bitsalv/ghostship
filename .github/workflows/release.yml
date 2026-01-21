@@ -292,8 +292,8 @@ jobs:
           name: ghostship-windows
           path: implant/dist/ghostship-windows.exe
 
-  build-bridge:
-    name: Build Bridge Components
+  build-bridge-linux:
+    name: Build Bridge (Linux)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -301,44 +301,109 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          go-version: '1.21'
+          node-version: '20'
+
+      - name: Download Node.js Linux x64
+        run: |
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o node-linux.tar.xz
+          tar -xf node-linux.tar.xz
+          mv node-v${NODE_VERSION}-linux-x64/bin/node node-linux
+          chmod +x node-linux
+
+      - name: Install bridge dependencies
+        working-directory: bridge/nodejs
+        run: npm install --production
+
+      - name: Create Linux bridge bundle
+        run: |
+          mkdir -p bridge-bundle-linux
+
+          # Copy Node.js runtime
+          cp node-linux bridge-bundle-linux/
+
+          # Copy bridge files
+          cp bridge/nodejs/bridge.js bridge-bundle-linux/
+          cp bridge/nodejs/package.json bridge-bundle-linux/
+          cp -r bridge/nodejs/node_modules bridge-bundle-linux/
+
+          # Create launcher script
+          cat > bridge-bundle-linux/ghostship-bridge << 'LAUNCHER'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          exec "$SCRIPT_DIR/node-linux" "$SCRIPT_DIR/bridge.js" "$@"
+          LAUNCHER
+          chmod +x bridge-bundle-linux/ghostship-bridge
+
+          # Create tarball
+          tar -czf bridge-linux.tar.gz -C bridge-bundle-linux .
+          ls -lh bridge-linux.tar.gz
+
+      - name: Upload Linux Bridge
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-linux
+          path: bridge-linux.tar.gz
+
+  build-bridge-windows:
+    name: Build Bridge (Windows)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Build Go Bridge
-        working-directory: bridge/go
+      - name: Download Node.js Windows x64
         run: |
-          go mod tidy
-          mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/bridge-linux main.go
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/bridge-windows.exe main.go
-          ls -lh dist/
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o node-windows.zip
+          unzip -q node-windows.zip
+          mv node-v${NODE_VERSION}-win-x64/node.exe node-windows.exe
 
-      - name: Package Node.js Bridge
+      - name: Install bridge dependencies
+        working-directory: bridge/nodejs
+        run: npm install --production
+
+      - name: Create Windows bridge bundle
         run: |
-          cd bridge/nodejs
-          npm install --production
-          cd ../..
-          zip -r bridge-nodejs.zip bridge/nodejs
+          mkdir -p bridge-bundle-windows
 
-      - name: Upload Bridge Artifacts
+          # Copy Node.js runtime
+          cp node-windows.exe bridge-bundle-windows/
+
+          # Copy bridge files
+          cp bridge/nodejs/bridge.js bridge-bundle-windows/
+          cp bridge/nodejs/package.json bridge-bundle-windows/
+          cp -r bridge/nodejs/node_modules bridge-bundle-windows/
+
+          # Create launcher batch file
+          cat > bridge-bundle-windows/ghostship-bridge.bat << 'LAUNCHER'
+          @echo off
+          "%~dp0node-windows.exe" "%~dp0bridge.js" %*
+          LAUNCHER
+
+          # Create zip
+          cd bridge-bundle-windows
+          zip -r ../bridge-windows.zip .
+          cd ..
+          ls -lh bridge-windows.zip
+
+      - name: Upload Windows Bridge
         uses: actions/upload-artifact@v4
         with:
-          name: bridge-components
-          path: |
-            bridge/go/dist/bridge-linux
-            bridge/go/dist/bridge-windows.exe
-            bridge-nodejs.zip
+          name: bridge-windows
+          path: bridge-windows.zip
 
   release:
     name: Create Release
-    needs: [build-linux, build-windows, build-bridge]
+    needs: [build-linux, build-windows, build-bridge-linux, build-bridge-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
@@ -358,9 +423,8 @@ jobs:
           files: |
             artifacts/ghostship-linux/ghostship-linux
             artifacts/ghostship-windows/ghostship-windows.exe
-            artifacts/bridge-components/bridge/go/dist/bridge-linux
-            artifacts/bridge-components/bridge/go/dist/bridge-windows.exe
-            artifacts/bridge-components/bridge-nodejs.zip
+            artifacts/bridge-linux/bridge-linux.tar.gz
+            artifacts/bridge-windows/bridge-windows.zip
           name: GhostShip ${{ github.ref_name }}
           body: |
             ## GhostShip ${{ github.ref_name }}
@@ -371,9 +435,8 @@ jobs:
             |------|----------|-------------|
             | `ghostship-linux` | Linux x64 | Implant with LD_PRELOAD stealth (no listening ports) |
             | `ghostship-windows.exe` | Windows x64 | Implant with Named Pipe + PPID Spoofing + AMSI/ETW bypass |
-            | `bridge-linux` | Linux x64 | Operator-side P2P bridge |
-            | `bridge-windows.exe` | Windows x64 | Operator-side P2P bridge |
-            | `bridge-nodejs.zip` | Any | Node.js bridge alternative |
+            | `bridge-linux.tar.gz` | Linux x64 | Operator-side P2P bridge (standalone bundle) |
+            | `bridge-windows.zip` | Windows x64 | Operator-side P2P bridge (standalone bundle) |
 
             ### Quick Start
 
@@ -383,8 +446,9 @@ jobs:
             sliver-server
             sliver > mtls --lport 8888
 
-            # Terminal 2: Start GhostShip bridge
-            ./bridge-linux --port 8888
+            # Terminal 2: Extract and start GhostShip bridge
+            tar -xzf bridge-linux.tar.gz
+            ./ghostship-bridge --port 8888
             # Output: Connection Key: hs://abc123...
             ```
 
