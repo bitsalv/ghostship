@@ -84,8 +84,11 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     if (is_target_address(addr)) {
         int pipe_fd = get_pipe_fd();
 
+        fprintf(stderr, "[HOOK] Intercepted connect to 127.0.0.1:8888, sockfd=%d, pipe_fd=%d\n", sockfd, pipe_fd);
+
         if (pipe_fd < 0) {
             /* No pipe fd available, fall through to real connect */
+            fprintf(stderr, "[HOOK] No pipe fd, using real connect\n");
             return real_connect(sockfd, addr, addrlen);
         }
 
@@ -95,11 +98,14 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
          * it's writing to our socketpair.
          */
         if (dup2(pipe_fd, sockfd) < 0) {
+            fprintf(stderr, "[HOOK] dup2 failed: %s\n", strerror(errno));
             return -1;
         }
 
         /* Track this fd as hijacked for later getsockopt/getpeername calls */
         hijacked_sockfd = sockfd;
+
+        fprintf(stderr, "[HOOK] Redirected sockfd=%d to pipe_fd=%d, hijacked_sockfd=%d\n", sockfd, pipe_fd, hijacked_sockfd);
 
         /* Success - Sliver now talks through the pipe */
         return 0;
