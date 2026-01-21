@@ -1,4 +1,4 @@
-# GhostShip
+# GhostShip 🚢👻
 
 ## P2P Command & Control Bridge
 ### v1.0.0-alpha
@@ -12,7 +12,7 @@
 
 **GhostShip** is a peer-to-peer (P2P) communication layer designed to bridge [Sliver C2](https://github.com/BishopFox/sliver) implants and servers through the [HyperDHT](https://github.com/holepunchto/hyperdht) network.
 
-By utilizing [Holesail](https://github.com/holesail/holesail) technology, GhostShip allows C2 traffic to traverse the internet via a decentralized DHT, effectively bypassing the need for public IPs, static domains, or traditional VPS infrastructure.
+By utilizing [HyperDHT](https://docs.pears.com/building-blocks/hyperdht) from the [Pear](https://pears.com/) / [Holepunch](https://holepunch.to/) ecosystem, GhostShip allows C2 traffic to traverse the internet via a decentralized DHT, effectively bypassing the need for public IPs, static domains, or traditional VPS infrastructure.
 
 > [!IMPORTANT]
 > **This is a Proof of Concept (PoC)** — GhostShip was developed to explore the feasibility of P2P-based C2 communication. The current implementation relies on workarounds (bridging Sliver rather than native integration) to validate the concept. If proven effective, the recommended path forward is developing a purpose-built C2 with native P2P transport, rather than maintaining a bridge architecture.
@@ -170,7 +170,3 @@ This project is for **authorized security research and penetration testing only*
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
-
----
-
-*GhostShip - Sailing through the DHT.*
