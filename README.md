@@ -1,4 +1,4 @@
-# GhostShip 🚢👻
+# GhostShip 👻🚢
 
 ## P2P Command & Control Bridge
 ### v1.0.0-alpha
